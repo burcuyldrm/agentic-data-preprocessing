@@ -1,0 +1,126 @@
+erDiagram
+    USERS {
+        INTEGER id PK
+        TEXT email UK "NOT NULL"
+        TEXT password_hash "NOT NULL"
+        TEXT created_at "NOT NULL, UTC ISO8601"
+    }
+
+    DATASETS {
+        INTEGER id PK
+        TEXT source "NOT NULL, openml|uci|upload"
+        TEXT source_dataset_id "nullable"
+        TEXT name "NOT NULL"
+        TEXT file_path UK "NOT NULL"
+        TEXT file_hash UK "NOT NULL, SHA-256"
+        INTEGER row_count "nullable"
+        INTEGER column_count "nullable"
+        INTEGER file_size_bytes "nullable"
+        TEXT download_status "NOT NULL, DEFAULT pending"
+        TEXT created_at "NOT NULL"
+    }
+
+    DATASET_PROFILES {
+        INTEGER id PK
+        INTEGER dataset_id FK "NOT NULL UNIQUE"
+        INTEGER numeric_column_count "NOT NULL"
+        INTEGER categorical_column_count "NOT NULL"
+        REAL total_missing_pct "NOT NULL, 0.0-100.0"
+        TEXT missing_value_detail "JSON, nullable"
+        TEXT target_column "NOT NULL"
+        TEXT problem_type "NOT NULL, classification|regression"
+        INTEGER class_count "nullable, classification only"
+        TEXT class_balance_detail "JSON, nullable"
+        INTEGER train_row_count "nullable"
+        INTEGER test_row_count "nullable"
+        TEXT numeric_stats "JSON, nullable"
+        TEXT categorical_stats "JSON, nullable"
+        TEXT skewness_detail "JSON, nullable"
+        TEXT profile_hash "NOT NULL"
+        TEXT profiled_at "NOT NULL"
+    }
+
+    ANALYSIS_RUNS {
+        INTEGER id PK
+        INTEGER user_id FK "NOT NULL"
+        INTEGER dataset_id FK "NOT NULL"
+        TEXT user_request "NOT NULL"
+        TEXT status "NOT NULL, DEFAULT pending"
+        TEXT experiment_mode "NOT NULL, A|B|C|D"
+        INTEGER random_seed "NOT NULL, DEFAULT 42"
+        INTEGER max_attempts "NOT NULL, DEFAULT 5"
+        INTEGER attempt_count "NOT NULL, DEFAULT 0"
+        TEXT started_at "NOT NULL"
+        TEXT finished_at "nullable"
+        TEXT error_message "nullable"
+    }
+
+    PREPROCESSING_STRATEGIES {
+        INTEGER id PK
+        TEXT imputation_numeric "NOT NULL"
+        TEXT imputation_categorical "NOT NULL"
+        TEXT scaling_method "NOT NULL"
+        TEXT encoding_method "NOT NULL"
+        TEXT outlier_handling "NOT NULL, DEFAULT none"
+        TEXT feature_selection "NOT NULL, DEFAULT none"
+        TEXT extra_params "JSON, nullable"
+        TEXT strategy_signature UK "NOT NULL"
+        TEXT created_at "NOT NULL"
+    }
+
+    EVALUATION_ATTEMPTS {
+        INTEGER id PK
+        INTEGER analysis_run_id FK "NOT NULL"
+        INTEGER strategy_id FK "NOT NULL"
+        INTEGER attempt_number "NOT NULL"
+        TEXT model_type "NOT NULL"
+        TEXT primary_metric_name "NOT NULL"
+        REAL cv_primary_score "nullable"
+        REAL cv_secondary_score "nullable"
+        TEXT cv_scores_detail "JSON, nullable"
+        REAL duration_seconds "nullable"
+        INTEGER llm_call_count "NOT NULL, DEFAULT 0"
+        TEXT status "NOT NULL, DEFAULT running"
+        TEXT error_message "nullable"
+        TEXT attempted_at "NOT NULL"
+    }
+
+    EXPERIENCE_MEMORY {
+        INTEGER id PK
+        TEXT profile_hash "NOT NULL"
+        INTEGER strategy_id FK "NOT NULL"
+        TEXT problem_type "NOT NULL"
+        REAL cv_score_avg "NOT NULL"
+        REAL cv_score_best "NOT NULL"
+        INTEGER attempt_count "NOT NULL, DEFAULT 1"
+        INTEGER success_count "NOT NULL, DEFAULT 0"
+        REAL avg_duration_seconds "nullable"
+        INTEGER last_dataset_id FK "nullable"
+        INTEGER last_analysis_run_id FK "nullable"
+        TEXT last_updated_at "NOT NULL"
+    }
+
+    ANALYSIS_REPORTS {
+        INTEGER id PK
+        INTEGER analysis_run_id FK "NOT NULL UNIQUE"
+        INTEGER best_strategy_id FK "nullable"
+        REAL final_test_primary_score "nullable"
+        REAL final_test_secondary_score "nullable"
+        TEXT final_test_metrics_detail "JSON, nullable"
+        REAL cv_primary_score "nullable, best CV score"
+        INTEGER total_attempts "NOT NULL, DEFAULT 0"
+        REAL total_duration_seconds "nullable"
+        INTEGER total_llm_calls "NOT NULL, DEFAULT 0"
+        TEXT selection_rationale "nullable"
+        TEXT report_created_at "NOT NULL"
+    }
+
+    USERS              ||--o{ ANALYSIS_RUNS         : "initiates"
+    DATASETS           ||--||  DATASET_PROFILES     : "has profile"
+    DATASETS           ||--o{ ANALYSIS_RUNS         : "used in"
+    ANALYSIS_RUNS      ||--o{ EVALUATION_ATTEMPTS   : "contains"
+    PREPROCESSING_STRATEGIES ||--o{ EVALUATION_ATTEMPTS : "tested in"
+    PREPROCESSING_STRATEGIES ||--o{ EXPERIENCE_MEMORY   : "summarized by"
+    ANALYSIS_RUNS      ||--o|  ANALYSIS_REPORTS     : "produces"
+    DATASETS           |o--o{  EXPERIENCE_MEMORY    : "last seen in"
+    ANALYSIS_RUNS      |o--o{  EXPERIENCE_MEMORY    : "last updated from"

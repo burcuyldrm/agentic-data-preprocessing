@@ -1,0 +1,102 @@
+flowchart TD
+    classDef process  fill:#D6EAF8,stroke:#2874A6,color:#1B2631
+    classDef decision fill:#FCF3CF,stroke:#D4AC0D,color:#1B2631
+    classDef error    fill:#FADBD8,stroke:#C0392B,color:#1B2631
+    classDef recovery fill:#FDEBD0,stroke:#D35400,color:#1B2631
+    classDef ok       fill:#D5F5E3,stroke:#1E8449,color:#1B2631
+    classDef split    fill:#1A5276,stroke:#154360,color:#fff,font-weight:bold
+    classDef agent    fill:#E8DAEF,stroke:#8E44AD,color:#1B2631
+    classDef se       fill:#2C3E50,stroke:#2C3E50,color:#fff
+
+    START(["Baslangic - Veri Profilleme ve On Isleme"]):::se
+    LOAD["1. Veri seti dosya deposundan yuklenir"]:::process
+
+    CHK_EMPTY{"Veri seti bos mu veya okunamiyor mu?"}:::decision
+    NOTIFY_EMPTY["Hata kaydedilir\nBildirim: Veri seti bos veya bozuk\nYeniden indirme onerilir"]:::error
+    END_FAIL(["Islem sonlandi"]):::se
+
+    SPLIT["VERi SIZINTISI ONLEMI\nTest seti baslangiçta ve yalnizca bir kez ayrilir\nYuzde 80 Egitim Verisi - Yuzde 20 Test Verisi\nTest seti kilitlenir:\nProfilleme disinda tutulur\nStrateji seciminde kullanilmaz\nYalnizca nihai degerlendirmede acilir"]:::split
+
+    TRAIN_ONLY["Tum profilleme ve on isleme islemleri\nYALNIZCA Egitim Verisi uzerinde yurutulur"]:::split
+
+    CHK_TARGET{"Hedef degisken belirlenebildi mi?"}:::decision
+    ASK_TARGET["Kullanicidan hedef degisken\nve problem turu istenir\nsiniflandirma veya regresyon"]:::recovery
+    CHK_USER_TARGET{"Kullanici belirledi mi?"}:::decision
+    INFER_TGT["Sistem otomatik tahmin dener\nyuksek kardinalite: regresyon\ndusuk kardinalite: siniflandirma"]:::recovery
+    PROFILE_FAIL(["Islem sonlandi\nhedef degisken belirlenemedi"]):::se
+
+    DETECT_TYPES["2. Veri turleri belirlenir: Sayisal, Kategorik, Tarih"]:::process
+
+    CHK_TYPES{"Desteklenmeyen veri turu var mi?"}:::decision
+    SKIP_COL["Desteklenmeyen sutun atlanir\nUyari loglanir"]:::recovery
+
+    MISSING["3. Eksik deger oranlari incelenir (egitim verisi)"]:::process
+    CAT_ANALYSIS["4. Kategorik degiskenler analiz edilir:\nkategori sayisi, nadir kategori orani"]:::process
+    NUM_ANALYSIS["5. Sayisal dagilimlar analiz edilir:\ncarpiklik, medyan, varyans"]:::process
+    OUTLIER["6. Aykiri degerler belirlenir (IQR yontemi)"]:::process
+
+    CHK_STRUCT{"Gecersiz sutun yapisi tespit edildi mi?\nBilinmeyen kategori veya tam eksik sutun"}:::decision
+    FIX_STRUCT["Kural tabanli duzeltme uygulanir\nveya sutun analiz disi birakilir\nUyari kaydedilir"]:::recovery
+
+    BUILD_PROFILE["7. Veri profili olusturulur:\neksik oran, carpiklik, kategori sayisi\naykiri deger orani, boyut bilgisi"]:::ok
+
+    QUERY_MEM["8a. Deneyim Bellegi sorgulanir:\nbenzer veri profili icin gecmiste\nbasarili stratejiler listelenir"]:::process
+    SELECT_CAND["8b. Analysis and Preprocessing Agent\nstrateji adaylarini belirler\nLLM karar destegi - Bellek oncelik saglar"]:::agent
+    FILTER_STRAT["9. Profille uyumsuz stratejiler elenir (kural tabanli):\nCok kategorik: boyut siniri kontrolu\nYuksek eksik oran: model imputation one alinir\nYuksek carpiklik: robust scaler tercih edilir"]:::process
+
+    CHK_CAND{"Gecerli strateji adayi var mi?"}:::decision
+    DEFAULT_STRAT["Varsayilan strateji uygulanir (Yontem A):\nOrtanca ve en sik deger doldurma\nOne-Hot kodlama\nStandart olcekleme"]:::recovery
+
+    BUILD_PIPE["10. scikit-learn Pipeline olusturulur\nDonusumler YALNIZCA Egitim Verisi uzerinden ogrenilir (fit)\nTest verisi yalnizca donusturulur (transform)\nColumnTransformer:\n- Sayisal: Imputer, Scaler\n- Kategorik: Imputer, Encoder"]:::split
+
+    CHK_PIPE{"Pipeline basariyla olusturuldu mu?"}:::decision
+    LOG_PIPE_ERR["Hata kaydedilir\nBu strateji gecersiz isaretlenir"]:::error
+    CHK_MORE_CAND{"Baska gecerli aday var mi?"}:::decision
+    FALLBACK_PIPE["Son care: Minimal standart pipeline\nYontem A dogrudan uygulanir"]:::recovery
+
+    PASS_ON(["11. Degerlendirme asamasina gec\nPipeline, Strateji, Egitim ve Test verisi iletilir"]):::se
+
+    START --> LOAD
+    LOAD --> CHK_EMPTY
+    CHK_EMPTY -->|Evet - Bos| NOTIFY_EMPTY
+    NOTIFY_EMPTY --> END_FAIL
+    CHK_EMPTY -->|Hayir| SPLIT
+
+    SPLIT --> TRAIN_ONLY
+    TRAIN_ONLY --> CHK_TARGET
+    CHK_TARGET -->|Evet| DETECT_TYPES
+    CHK_TARGET -->|Hayir| ASK_TARGET
+    ASK_TARGET --> CHK_USER_TARGET
+    CHK_USER_TARGET -->|Evet| DETECT_TYPES
+    CHK_USER_TARGET -->|Hayir| INFER_TGT
+    INFER_TGT -->|Tahmin basarili| DETECT_TYPES
+    INFER_TGT -->|Tahmin basarisiz| PROFILE_FAIL
+
+    DETECT_TYPES --> CHK_TYPES
+    CHK_TYPES -->|Evet| SKIP_COL
+    SKIP_COL --> MISSING
+    CHK_TYPES -->|Hayir| MISSING
+
+    MISSING --> CAT_ANALYSIS
+    CAT_ANALYSIS --> NUM_ANALYSIS
+    NUM_ANALYSIS --> OUTLIER
+    OUTLIER --> CHK_STRUCT
+    CHK_STRUCT -->|Evet| FIX_STRUCT
+    FIX_STRUCT --> BUILD_PROFILE
+    CHK_STRUCT -->|Hayir| BUILD_PROFILE
+
+    BUILD_PROFILE --> QUERY_MEM
+    QUERY_MEM --> SELECT_CAND
+    SELECT_CAND --> FILTER_STRAT
+    FILTER_STRAT --> CHK_CAND
+    CHK_CAND -->|Evet| BUILD_PIPE
+    CHK_CAND -->|Hayir| DEFAULT_STRAT
+    DEFAULT_STRAT --> BUILD_PIPE
+
+    BUILD_PIPE --> CHK_PIPE
+    CHK_PIPE -->|Evet| PASS_ON
+    CHK_PIPE -->|Hayir| LOG_PIPE_ERR
+    LOG_PIPE_ERR --> CHK_MORE_CAND
+    CHK_MORE_CAND -->|Evet| BUILD_PIPE
+    CHK_MORE_CAND -->|Hayir| FALLBACK_PIPE
+    FALLBACK_PIPE --> PASS_ON

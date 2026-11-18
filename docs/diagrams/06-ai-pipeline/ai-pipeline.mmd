@@ -1,0 +1,112 @@
+flowchart LR
+    classDef userNode   fill:#2E86AB,stroke:#1A5F7A,color:#fff
+    classDef agentNode  fill:#8E44AD,stroke:#6C3483,color:#fff
+    classDef toolNode   fill:#1A5276,stroke:#154360,color:#fff
+    classDef memNode    fill:#1E8449,stroke:#196F3D,color:#fff,stroke-dasharray: 4 4
+    classDef extNode    fill:#D35400,stroke:#A04000,color:#fff
+    classDef splitNode  fill:#C0392B,stroke:#922B21,color:#fff,font-weight:bold
+    classDef okNode     fill:#D5F5E3,stroke:#1E8449,color:#1B2631
+    classDef se         fill:#2C3E50,stroke:#2C3E50,color:#fff
+    classDef fail       fill:#FADBD8,stroke:#C0392B,color:#1B2631
+
+    USER_REQ(["Kullanici Istegi"]):::se
+
+    subgraph REQ_PHASE ["1 - Istek ve Veri Seti Kesfi"]
+        direction TB
+        RA_INTERP["Research Agent\nIstegi yorumlar\nLLM"]:::agentNode
+        SEARCH_TOOL["Arama Araclari\nOpenML, UCI\nPython"]:::toolNode
+        CANDIDATES["Veri seti adaylari\nkullaniciya sunulur"]:::okNode
+        USER_SELECT(["Kullanici secer\nveya yukler"]):::se
+    end
+
+    subgraph VAL_PHASE ["2 - Indirme ve Dogrulama"]
+        direction TB
+        DOWNLOAD["Guvenli indirme\nHTTPS\nPython"]:::toolNode
+        VALIDATE["Dogrulama:\ntur, boyut, hash\nPython"]:::toolNode
+        STORE_DS["Veri seti deposuna\nkaydet"]:::toolNode
+    end
+
+    subgraph PROF_PHASE ["3 - Veri Profilleme - Yalnizca Egitim Verisi"]
+        direction TB
+        SPLIT_NODE["TRAIN ve TEST AYIRIMI\nYuzde 80 Egitim - Yuzde 20 Test\nTest seti kilitlendi\nPython"]:::splitNode
+        PROFILE_TOOL["Profilleme Araclari\neksik, carpiklik\nkategori, aykiri deger\npandas"]:::toolNode
+        DATA_PROFILE["Veri Profili\nolusturuldu"]:::okNode
+    end
+
+    subgraph STRAT_PHASE ["4 - Strateji Secimi"]
+        direction TB
+        MEM_READ[("Deneyim Bellegi\nSQLite\nBenzer profil\noncelik sirasi")]:::memNode
+        APA_SELECT["Analysis and Preprocessing Agent\nStrateji adaylari belirlenir\nLLM"]:::agentNode
+        FILTER["Profille uyumsuz\nstratejiler elenir\nKural tabanli"]:::toolNode
+    end
+
+    subgraph PREP_PHASE ["5 - On Isleme - Yalnizca Egitim Verisi"]
+        direction TB
+        BUILD_PIPE["scikit-learn Pipeline\nolusturulur\nPython"]:::toolNode
+        FIT_PIPE["Pipeline fit - X egitim\nDonusumler yalnizca\negitim verisinden ogrenilir\nscikit-learn"]:::splitNode
+    end
+
+    subgraph EVAL_PHASE ["6 - Model Egitimi ve Degerlendirme"]
+        direction TB
+        CV_EVAL["5-katli Capraz Dogrulama\nYalnizca Egitim Verisi\nscikit-learn"]:::toolNode
+        METRICS["Performans metrikleri:\nMakro-F1, RMSE vb.\nPython"]:::toolNode
+    end
+
+    subgraph SELF_PHASE ["7 - Ozdenetim - maks 5 deneme"]
+        direction TB
+        ESA_EVAL["Evaluation and Self-Correction Agent\nSonuclari yorumlar\nLLM"]:::agentNode
+        CHK_PERF{"Basarili mi?\nyuzde 2 iyilesme"}
+        MEM_WRITE[("Deneyim Bellegi\nSQLite\nSonuc kaydedilir")]:::memNode
+        ESA_CORRECT["Agent alternatif\nstrateji secer\nLLM"]:::agentNode
+        CHK_LIMIT{"Limit:\n5 deneme\n2 ard. basarisiz\nSure asimi"}
+    end
+
+    subgraph FINAL_PHASE ["8 - Nihai Degerlendirme - Test Verisi - Yalnizca 1 Kez"]
+        direction TB
+        UNLOCK["TEST SETI ACILIYOR\nIlk ve tek kullanim"]:::splitNode
+        FINAL_TEST["Pipeline transform X test\nModel predict X test\nNihai metrikler\nscikit-learn"]:::toolNode
+    end
+
+    REPORT(["Sonuc Raporu\nStrateji, Gerekce, Denemeler\nCV Skoru, Test Skoru"]):::se
+    FAIL(["Islem Sonlandi\nhata veya limit asimi"]):::fail
+
+    OML_EXT["OpenML"]:::extNode
+    UCI_EXT["UCI ML Repository"]:::extNode
+    LLM_EXT["LLM API"]:::extNode
+
+    USER_REQ --> RA_INTERP
+    RA_INTERP --> SEARCH_TOOL
+    SEARCH_TOOL --> CANDIDATES
+    CANDIDATES --> USER_SELECT
+    USER_SELECT --> DOWNLOAD
+    DOWNLOAD -->|Hata| FAIL
+    DOWNLOAD --> VALIDATE
+    VALIDATE -->|Hata| FAIL
+    VALIDATE --> STORE_DS
+    STORE_DS --> SPLIT_NODE
+    SPLIT_NODE --> PROFILE_TOOL
+    PROFILE_TOOL --> DATA_PROFILE
+    DATA_PROFILE --> MEM_READ
+    MEM_READ --> APA_SELECT
+    APA_SELECT --> FILTER
+    FILTER --> BUILD_PIPE
+    BUILD_PIPE --> FIT_PIPE
+    FIT_PIPE --> CV_EVAL
+    CV_EVAL --> METRICS
+    METRICS --> ESA_EVAL
+    ESA_EVAL --> CHK_PERF
+    CHK_PERF -->|Evet| MEM_WRITE
+    CHK_PERF -->|Hayir| MEM_WRITE
+    MEM_WRITE --> CHK_LIMIT
+    CHK_LIMIT -->|Basarili veya limit doldu| UNLOCK
+    CHK_LIMIT -->|Devam et| ESA_CORRECT
+    ESA_CORRECT --> FIT_PIPE
+    UNLOCK --> FINAL_TEST
+    FINAL_TEST --> REPORT
+
+    SEARCH_TOOL -.->|HTTPS| OML_EXT
+    SEARCH_TOOL -.->|HTTPS| UCI_EXT
+    RA_INTERP -.->|Karar Destegi| LLM_EXT
+    APA_SELECT -.->|Karar Destegi| LLM_EXT
+    ESA_EVAL -.->|Karar Destegi| LLM_EXT
+    ESA_CORRECT -.->|Karar Destegi| LLM_EXT

@@ -1,0 +1,103 @@
+@startuml use-case
+!theme plain
+title Kullanım Senaryoları — Çok Ajanlı Veri Analizi ve Ön İşleme Sistemi
+
+skinparam actorStyle awesome
+skinparam backgroundColor #FFFFFF
+skinparam usecase {
+  BackgroundColor #D6EAF8
+  BorderColor    #2874A6
+  FontColor      #1B2631
+  FontSize       11
+}
+skinparam actor {
+  BackgroundColor #EBF5FB
+  BorderColor    #1A5276
+  FontColor      #1B2631
+  FontSize       11
+}
+skinparam rectangle {
+  BorderColor    #2C3E50
+  BorderThickness 2
+  FontSize       13
+  FontStyle      bold
+}
+skinparam package {
+  BackgroundColor #F8FBFF
+  BorderColor    #85C1E9
+  FontSize       10
+  FontStyle      bold
+}
+skinparam ArrowColor    #2C3E50
+skinparam ArrowFontSize 9
+skinparam shadowing     false
+
+left to right direction
+
+' ─── Aktörler ───────────────────────────────────────────────────────────────
+actor "Kullanıcı"         as User
+actor "OpenML\nServisi"       as OpenML <<Dış Sistem>>
+actor "UCI ML\nRepository"    as UCI    <<Dış Sistem>>
+actor "LLM API\nServisi"      as LLM    <<Dış Sistem>>
+
+' ─── Sistem Sınırı ──────────────────────────────────────────────────────────
+rectangle "Çok Ajanlı Veri Analizi ve Ön İşleme Sistemi" {
+
+  package "Kimlik Yönetimi" {
+    usecase "Kayıt Ol"   as UC1
+    usecase "Giriş Yap"  as UC2
+  }
+
+  package "Veri Seti Keşfi" {
+    usecase "Analiz İsteği\nOluştur"              as UC3
+    usecase "Veri Seti Ara"                       as UC4
+    usecase "Veri Seti Adaylarını\nGörüntüle"     as UC5
+    usecase "Veri Seti Seç"                       as UC6
+    usecase "Veri Seti Yükle\n(Alternatif)"       as UC7
+  }
+
+  package "Analiz Yapılandırma" {
+    usecase "Hedef Değişken ve\nProblem Türü Belirle" as UC8
+    usecase "Otonom Analizi\nBaşlat"                  as UC9
+  }
+
+  package "İzleme ve Sonuçlar" {
+    usecase "Analiz Durumunu\nTakip Et"              as UC10
+    usecase "Veri Profili\nGörüntüle"                as UC11
+    usecase "Ön İşleme Sonuçlarını\nGörüntüle"       as UC12
+    usecase "Model Değerlendirme\nSonuçlarını Görüntüle" as UC13
+    usecase "Deneme Geçmişini\nİncele"               as UC14
+    usecase "Sonuç Raporunu\nGörüntüle"              as UC15
+  }
+}
+
+' ─── Kullanıcı ilişkileri ───────────────────────────────────────────────────
+User --> UC1
+User --> UC2
+User --> UC3
+User --> UC5
+User --> UC6
+User --> UC7
+User --> UC8
+User --> UC9
+User --> UC10
+User --> UC11
+User --> UC12
+User --> UC13
+User --> UC14
+User --> UC15
+
+' ─── Include / Extend ───────────────────────────────────────────────────────
+' Her analiz isteği zorunlu olarak veri seti aramayı kapsar
+UC3 ..> UC4 : <<include>>
+
+' Hedef değişken belirleme, veri seti seçimini genişleten isteğe bağlı adımdır
+UC8 ..> UC6 : <<extend>>
+
+' ─── Dış sistem ilişkileri ──────────────────────────────────────────────────
+UC4 --> OpenML
+UC4 --> UCI
+' LLM API, otonom analiz sırasında karar desteği sağlar
+LLM --> UC9
+
+@enduml

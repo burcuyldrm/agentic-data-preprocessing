@@ -1,0 +1,120 @@
+flowchart TD
+    %% ─── Renk tanımları ─────────────────────────────────────────────────────
+    classDef process  fill:#D6EAF8,stroke:#2874A6,color:#1B2631
+    classDef decision fill:#FCF3CF,stroke:#D4AC0D,color:#1B2631
+    classDef error    fill:#FADBD8,stroke:#C0392B,color:#1B2631
+    classDef recovery fill:#FDEBD0,stroke:#D35400,color:#1B2631
+    classDef ok       fill:#D5F5E3,stroke:#1E8449,color:#1B2631
+    classDef se       fill:#2C3E50,stroke:#2C3E50,color:#fff
+
+    %% ─── Başlangıç ──────────────────────────────────────────────────────────
+    START(["Başlangıç"]):::se
+
+    %% ─── Normal Akış: 1–3 ──────────────────────────────────────────────────
+    DEFINE["1. Kullanıcı analiz problemini<br/>ve arama kriterlerini tanımlar"]:::process
+    INTERPRET["2. Research Agent isteği yorumlar,<br/>anahtar kelimeler ve filtreler çıkarır"]:::process
+
+    %% ─── Hata 1: Veri kaynağına erişilemiyor ───────────────────────────────
+    CHK_SRC{"Veri kaynaklarına<br/>erişilebilir mi?"}:::decision
+    RETRY_SRC["3×  yeniden dene<br/>(exponential backoff)"]:::recovery
+    CHK_RETRY1{"Erişim<br/>sağlandı mı?"}:::decision
+    USE_PARTIAL["Erişilebilen<br/>kaynakla devam et"]:::recovery
+    CHK_PARTIAL{"En az bir<br/>kaynak erişilebilir?"}:::decision
+    NOTIFY_NO_SRC["Bildirim: Veri kaynağına<br/>erişilemiyor<br/>→ Kendi veri seti yükleme önerilir"]:::error
+    CHK_USER_UPL{"Kullanıcı dosya<br/>yüklüyor mu?"}:::decision
+    MANUAL_UPL["Kullanıcı veri<br/>seti yükler"]:::recovery
+    END_FAIL_SRC(["İşlem sonlandı<br/>(kaynak erişim hatası)"]):::se
+
+    %% ─── Normal Akış: 4 ─────────────────────────────────────────────────────
+    SEARCH["3. OpenML ve UCI'de<br/>veri setleri aranır"]:::process
+
+    %% ─── Hata 2: Uygun veri seti bulunamıyor ───────────────────────────────
+    CHK_CAND{"Uygun aday<br/>bulundu mu?"}:::decision
+    EXPAND["Kriterleri genişlet:<br/>zorunlu filtreler azaltılır"]:::recovery
+    CHK_EXPAND{"Genişletilmiş<br/>aramada aday bulundu mu?"}:::decision
+    NOTIFY_NO_CAND["Bildirim: Uygun veri seti bulunamadı<br/>→ Farklı kriter girilmesi istenir"]:::error
+    NEW_CRIT["Kullanıcı yeni arama<br/>kriteri girer"]:::recovery
+
+    %% ─── Normal Akış: 5–6 ───────────────────────────────────────────────────
+    PRESENT["4. Boyut, kaynak, hedef değişken<br/>ve lisans bilgisiyle adaylar listelenir"]:::process
+    SELECT["5. Kullanıcı veri<br/>seti seçer"]:::process
+    DOWNLOAD["6. Güvenli indirme başlatılır<br/>(HTTPS + onaylı kaynak listesi)"]:::process
+
+    %% ─── Hata 3: İndirme başarısız ─────────────────────────────────────────
+    CHK_DL{"İndirme<br/>başarılı mı?"}:::decision
+    RETRY_DL["3× yeniden dene<br/>(exponential backoff)"]:::recovery
+    CHK_DL_RETRY{"Başarılı mı?"}:::decision
+    NOTIFY_DL["Bildirim: İndirme başarısız<br/>→ Farklı aday seçmesi önerilir"]:::error
+
+    %% ─── Normal Akış: 7 ─────────────────────────────────────────────────────
+    VALIDATE["7. Dosya doğrulama:<br/>tür · boyut · hash · bütünlük"]:::process
+
+    %% ─── Hata 4: Desteklenmeyen dosya biçimi ───────────────────────────────
+    CHK_FMT{"Dosya biçimi<br/>CSV mi?"}:::decision
+    NOTIFY_FMT["Bildirim: Desteklenmeyen biçim<br/>(yalnızca CSV desteklenir)<br/>→ Farklı aday önerilir"]:::error
+
+    %% ─── Hata 5: Boyut sınırı aşılıyor ─────────────────────────────────────
+    CHK_SIZE{"50.000 satır<br/>sınırı aşıldı mı?"}:::decision
+    NOTIFY_SIZE["Bildirim: Boyut sınırı aşıldı<br/>→ Daha küçük veri seti önerilir"]:::error
+
+    %% ─── Hata 6: Veri seti bozuk / okunamıyor ──────────────────────────────
+    CHK_INT{"Dosya bütünlüğü<br/>sağlam mı?"}:::decision
+    NOTIFY_COR["Hata kaydedilir<br/>Bildirim: Dosya bozuk<br/>→ Alternatif aday önerilir"]:::error
+
+    %% ─── Normal Akış: 8–10 ──────────────────────────────────────────────────
+    STORE["8. Veri seti dosya<br/>deposuna kaydedilir"]:::ok
+    HASH_CHECK["9. Tekrar kontrolü:<br/>hash ile önceki yüklemeler karşılaştırılır"]:::process
+    NEXT(["10. Veri Profilleme<br/>aşamasına geç"]):::se
+
+    %% ─── Akış bağlantıları ──────────────────────────────────────────────────
+    START      --> DEFINE
+    DEFINE     --> INTERPRET
+    INTERPRET  --> CHK_SRC
+
+    CHK_SRC    -->|Evet| SEARCH
+    CHK_SRC    -->|Hayır| RETRY_SRC
+    RETRY_SRC  --> CHK_RETRY1
+    CHK_RETRY1 -->|Evet| SEARCH
+    CHK_RETRY1 -->|Hayır| USE_PARTIAL
+    USE_PARTIAL --> CHK_PARTIAL
+    CHK_PARTIAL -->|Evet| SEARCH
+    CHK_PARTIAL -->|Hayır| NOTIFY_NO_SRC
+    NOTIFY_NO_SRC --> CHK_USER_UPL
+    CHK_USER_UPL -->|Evet| MANUAL_UPL
+    CHK_USER_UPL -->|Hayır| END_FAIL_SRC
+    MANUAL_UPL --> VALIDATE
+
+    SEARCH     --> CHK_CAND
+    CHK_CAND   -->|Evet| PRESENT
+    CHK_CAND   -->|Hayır| EXPAND
+    EXPAND     --> CHK_EXPAND
+    CHK_EXPAND -->|Evet| PRESENT
+    CHK_EXPAND -->|Hayır| NOTIFY_NO_CAND
+    NOTIFY_NO_CAND --> NEW_CRIT
+    NEW_CRIT   --> INTERPRET
+
+    PRESENT    --> SELECT
+    SELECT     --> DOWNLOAD
+    DOWNLOAD   --> CHK_DL
+    CHK_DL     -->|Evet| VALIDATE
+    CHK_DL     -->|Hayır| RETRY_DL
+    RETRY_DL   --> CHK_DL_RETRY
+    CHK_DL_RETRY -->|Evet| VALIDATE
+    CHK_DL_RETRY -->|Hayır| NOTIFY_DL
+    NOTIFY_DL  --> SELECT
+
+    VALIDATE   --> CHK_FMT
+    CHK_FMT    -->|Evet| CHK_SIZE
+    CHK_FMT    -->|Hayır| NOTIFY_FMT
+    NOTIFY_FMT --> SELECT
+
+    CHK_SIZE   -->|Hayır - Uygun| CHK_INT
+    CHK_SIZE   -->|Evet - Aşıldı| NOTIFY_SIZE
+    NOTIFY_SIZE --> SELECT
+
+    CHK_INT    -->|Evet| STORE
+    CHK_INT    -->|Hayır - Bozuk| NOTIFY_COR
+    NOTIFY_COR --> SELECT
+
+    STORE      --> HASH_CHECK
+    HASH_CHECK --> NEXT

@@ -1,0 +1,78 @@
+flowchart TB
+    classDef presentation fill:#2E86AB,stroke:#1A5F7A,color:#fff
+    classDef apiComp     fill:#8E44AD,stroke:#6C3483,color:#fff
+    classDef orchComp    fill:#E67E22,stroke:#CA6F1E,color:#fff
+    classDef agentComp   fill:#C0392B,stroke:#922B21,color:#fff
+    classDef execComp    fill:#1A5276,stroke:#154360,color:#fff
+    classDef storeComp   fill:#1E8449,stroke:#196F3D,color:#fff
+    classDef extComp     fill:#D35400,stroke:#A04000,color:#fff
+
+    subgraph P ["SUNUM KATMANI"]
+        WUI["Web Arayüzü\n(Frontend - teknoloji TBD)"]
+    end
+
+    subgraph A ["API KATMANI"]
+        FA["FastAPI"]
+        JWT["Kimlik Dogrulama (JWT)"]
+        EP["Endpointler: /analyze - /datasets - /status - /results"]
+    end
+
+    subgraph O ["ORKESTRASYON KATMANI"]
+        ORC["Deterministik Orkestrator\nDeneme Yonetimi (maks. 5) - Hata Yonetimi\nSure Siniri - Tekrar Engeli - Gorev Kontrolu"]
+    end
+
+    subgraph AG ["AJAN KATMANI -- karar ve gerekce, LLM destekli"]
+        RA["Research\nAgent"]
+        APA["Analysis and\nPreprocessing Agent"]
+        ESA["Evaluation and\nSelf-Correction Agent"]
+    end
+
+    subgraph EX ["CALISMA KATMANI -- veri donusumleri, Python araclari"]
+        SEARCH_T["Arama ve Indirme\nAraclari (HTTPS)"]
+        PROFILE_T["Veri Profilleme\nAraclari (pandas)"]
+        PREP_T["On Isleme Pipeline\n(scikit-learn)"]
+        EVAL_T["Model Degerlendirme\nAraclari (scikit-learn, CV)"]
+    end
+
+    subgraph DB ["KALICI DEPOLAMA KATMANI"]
+        MEM_DB[("Deneyim Bellegi\n(SQLite)")]
+        FILE_ST["Veri Seti Deposu\n(Dosya Sistemi)"]
+        REC_DB[("Deney Kayitlari\n(SQLite)")]
+    end
+
+    subgraph EXT ["DIS SERVISLER"]
+        OML["OpenML"]
+        UCI_SRC["UCI ML\nRepository"]
+        LLM_API["LLM API\nKarar Destegi"]
+    end
+
+    WUI <-->|HTTP REST| FA
+    FA --> JWT
+    FA --> EP
+    EP -->|Istek| ORC
+    ORC -->|Yonet| RA
+    ORC -->|Yonet| APA
+    ORC -->|Yonet| ESA
+    RA -->|Arac Cagrisi| SEARCH_T
+    APA -->|Arac Cagrisi| PROFILE_T
+    APA -->|Arac Cagrisi| PREP_T
+    ESA -->|Arac Cagrisi| EVAL_T
+    RA <-->|Karar Destegi| LLM_API
+    APA <-->|Karar Destegi| LLM_API
+    ESA <-->|Karar Destegi| LLM_API
+    SEARCH_T <-->|HTTPS API| OML
+    SEARCH_T <-->|HTTPS API| UCI_SRC
+    SEARCH_T -->|Kaydet| FILE_ST
+    PROFILE_T -->|Oku| FILE_ST
+    PREP_T <-->|Oku-Yaz| FILE_ST
+    EVAL_T -->|Oku| FILE_ST
+    ESA <-->|Oku-Yaz| MEM_DB
+    ESA -->|Yaz| REC_DB
+
+    class WUI presentation
+    class FA,JWT,EP apiComp
+    class ORC orchComp
+    class RA,APA,ESA agentComp
+    class SEARCH_T,PROFILE_T,PREP_T,EVAL_T execComp
+    class MEM_DB,FILE_ST,REC_DB storeComp
+    class OML,UCI_SRC,LLM_API extComp

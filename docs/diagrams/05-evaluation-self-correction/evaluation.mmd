@@ -1,0 +1,102 @@
+flowchart TD
+    classDef process  fill:#D6EAF8,stroke:#2874A6,color:#1B2631
+    classDef decision fill:#FCF3CF,stroke:#D4AC0D,color:#1B2631
+    classDef error    fill:#FADBD8,stroke:#C0392B,color:#1B2631
+    classDef recovery fill:#FDEBD0,stroke:#D35400,color:#1B2631
+    classDef ok       fill:#D5F5E3,stroke:#1E8449,color:#1B2631
+    classDef memory   fill:#D5F5E3,stroke:#1E8449,color:#1B2631,stroke-dasharray: 5 5
+    classDef agent    fill:#E8DAEF,stroke:#8E44AD,color:#1B2631
+    classDef locked   fill:#1A5276,stroke:#154360,color:#fff,font-weight:bold
+    classDef se       fill:#2C3E50,stroke:#2C3E50,color:#fff
+
+    START(["Baslangic - Degerlendirme ve Ozdenetim"]):::se
+    RECEIVE["On isleme stratejisi,\nPipeline ve Egitim-Test verisi alinir"]:::process
+
+    MEM_QUERY["Deneyim Bellegi sorgulanir:\nBenzer veri profili icin gecmiste basarili\nstratejiler onceliklendirilir\nBu veri setine ait kayitlar dislaniyor"]:::memory
+
+    CV["5-katli capraz dogrulama\nYALNIZCA Egitim Verisi uzerinde\nSiniflandirma: Lojistik Regresyon\nRegresyon: Ridge Regresyon\nReferans modeller"]:::process
+
+    CHK_TRAIN{"Model egitimi basarili mi?"}:::decision
+    LOG_TRAIN_ERR["Hata kaydedilir\nBu strateji basarisiz isaretlenir\nBellege hata kaydi yazilir"]:::error
+    TRAIN_RETRY{"Yeniden deneme hakki var mi?"}:::decision
+
+    COMPUTE_METRICS["Model performansi hesaplanir\nSiniflandirma: Makro-F1, Balanced Accuracy\nRegresyon: RMSE, MAE"]:::process
+    CHK_METRICS{"Gecerli performans sonucu uretildi mi?"}:::decision
+    LOG_METRIC_ERR["Hata kaydedilir\nStrateji gecersiz isaretlenir"]:::error
+
+    COMPARE["Referans Yontem A ile karsilastirilir:\nBirincil metrikte yuzde 2 goreli iyilesme hedeflenir"]:::process
+    CHK_SUCCESS{"Strateji basarili mi?\nReferansi geciyor veya ilk deneme kabul edilir"}:::decision
+
+    RECORD_SUCCESS["Sonuc Deneyim Bellegine kaydedilir:\nveri profili, strateji, CV skoru\ncalisma suresi, deneme numarasi"]:::memory
+    MARK_BEST["Bu strateji en iyi aday olarak isaretlenir"]:::ok
+
+    RECORD_FAIL["Sonuc Deneyim Bellegine kaydedilir:\nstrateji, dusuk skor, hata bilgisi"]:::memory
+
+    CHK_ATTEMPT{"Deneme sayisi 5 ten az mi?"}:::decision
+    CHK_CONSEC{"Art arda 2 basarisiz deneme gerceklesti mi?"}:::decision
+    CHK_TIME{"Sure siniri asildi mi?"}:::decision
+    STOP_CONSEC["Erken durdurma:\nArt arda iyilesme saglanamadi"]:::error
+
+    SELF_CORRECT["Evaluation and Self-Correction Agent\nLLM den alternatif strateji ister:\nOnceki basarisiz stratejiler iletilir\nVeri profili ve hata gerekceleri iletilir\nKarar destegi - hesaplama LLM de degil"]:::agent
+    CHK_LLM_VALID{"LLM ciktisi gecerli bir strateji mi?"}:::decision
+    LLM_FALLBACK["Hata kaydedilir\nEn az 1 kez denendi mi?\nEvet: Kural tabanli varsayilan\nHayir: Yontem A uygulanir"]:::recovery
+    CHK_PREV_TRIED{"Oneri daha once denendi mi?"}:::decision
+    SKIP_DUP["Tekrar atlanir\nYeni oneri istenir"]:::recovery
+
+    BEST_STRATEGY["En iyi gecerli strateji belirlenir\nCV skoruna gore siralama"]:::ok
+    CHK_HAS_BEST{"Gecerli strateji var mi?"}:::decision
+    USE_DEFAULT["Varsayilan strateji Yontem A kullanilir"]:::recovery
+
+    FINAL_EVAL["TEST SETI ACILIYOR - Yalnizca bir kez\nEn iyi strateji ayrilmis yuzde 20 Test Seti\nuzerinde degerlendirilir\nPipeline transform, predict, metrik hesaplama"]:::locked
+    GEN_REPORT["Sonuc raporu olusturulur:\nSecilen strateji, gerekce, tum denemeler\nCV skoru, nihai test skoru\nLLM cagri sayisi, calisma suresi"]:::ok
+    END_OK(["Islem tamamlandi"]):::se
+
+    START --> RECEIVE
+    RECEIVE --> MEM_QUERY
+    MEM_QUERY --> CV
+
+    CV --> CHK_TRAIN
+    CHK_TRAIN -->|Evet| COMPUTE_METRICS
+    CHK_TRAIN -->|Hayir - Hata| LOG_TRAIN_ERR
+    LOG_TRAIN_ERR --> TRAIN_RETRY
+    TRAIN_RETRY -->|Evet| SELF_CORRECT
+    TRAIN_RETRY -->|Hayir| BEST_STRATEGY
+
+    COMPUTE_METRICS --> CHK_METRICS
+    CHK_METRICS -->|Evet| COMPARE
+    CHK_METRICS -->|Hayir - Gecersiz| LOG_METRIC_ERR
+    LOG_METRIC_ERR --> TRAIN_RETRY
+
+    COMPARE --> CHK_SUCCESS
+    CHK_SUCCESS -->|Evet| RECORD_SUCCESS
+    RECORD_SUCCESS --> MARK_BEST
+    MARK_BEST --> BEST_STRATEGY
+
+    CHK_SUCCESS -->|Hayir| RECORD_FAIL
+    RECORD_FAIL --> CHK_ATTEMPT
+
+    CHK_ATTEMPT -->|Evet - devam et| CHK_CONSEC
+    CHK_ATTEMPT -->|Hayir - limit doldu| BEST_STRATEGY
+
+    CHK_CONSEC -->|Evet - erken dur| STOP_CONSEC
+    STOP_CONSEC --> BEST_STRATEGY
+    CHK_CONSEC -->|Hayir| CHK_TIME
+
+    CHK_TIME -->|Evet - sure doldu| BEST_STRATEGY
+    CHK_TIME -->|Hayir| SELF_CORRECT
+
+    SELF_CORRECT --> CHK_LLM_VALID
+    CHK_LLM_VALID -->|Hayir - gecersiz| LLM_FALLBACK
+    LLM_FALLBACK --> BEST_STRATEGY
+    CHK_LLM_VALID -->|Evet| CHK_PREV_TRIED
+    CHK_PREV_TRIED -->|Evet - tekrar| SKIP_DUP
+    SKIP_DUP --> SELF_CORRECT
+    CHK_PREV_TRIED -->|Hayir - yeni| CV
+
+    BEST_STRATEGY --> CHK_HAS_BEST
+    CHK_HAS_BEST -->|Evet| FINAL_EVAL
+    CHK_HAS_BEST -->|Hayir| USE_DEFAULT
+    USE_DEFAULT --> FINAL_EVAL
+
+    FINAL_EVAL --> GEN_REPORT
+    GEN_REPORT --> END_OK
