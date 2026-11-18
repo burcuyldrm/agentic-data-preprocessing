@@ -729,6 +729,58 @@ def safe_record_attempt(
 
 
 # ---------------------------------------------------------------------------
+# Analiz raporu
+# ---------------------------------------------------------------------------
+
+def save_analysis_report(
+    conn: sqlite3.Connection,
+    run_id: int,
+    best_strategy_id: Optional[int],
+    final_scores: dict,
+    cv_primary_score: Optional[float] = None,
+    total_attempts: int = 0,
+    total_duration_seconds: Optional[float] = None,
+    total_llm_calls: int = 0,
+    selection_rationale: Optional[str] = None,
+) -> int:
+    """
+    Analiz çalıştırmasının nihai raporunu analysis_reports tablosuna kaydeder.
+
+    Her analysis_run_id için yalnızca bir rapor olabilir (UNIQUE kısıt).
+    final_scores, evaluate_on_test() çıktısıyla uyumlu anahtarlar içermelidir.
+    """
+    metrics_detail = final_scores.get("final_test_metrics_detail")
+    metrics_json   = json.dumps(metrics_detail, sort_keys=True) if metrics_detail else None
+
+    cursor = conn.execute(
+        """
+        INSERT INTO analysis_reports (
+            analysis_run_id, best_strategy_id,
+            final_test_primary_score, final_test_secondary_score,
+            final_test_metrics_detail, cv_primary_score,
+            total_attempts, total_duration_seconds, total_llm_calls,
+            selection_rationale, report_created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            run_id,
+            best_strategy_id,
+            final_scores.get("final_test_primary_score"),
+            final_scores.get("final_test_secondary_score"),
+            metrics_json,
+            cv_primary_score,
+            total_attempts,
+            total_duration_seconds,
+            total_llm_calls,
+            selection_rationale,
+            _utc_now(),
+        ),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+# ---------------------------------------------------------------------------
 # Özel yardımcılar
 # ---------------------------------------------------------------------------
 

@@ -8,6 +8,7 @@ FastAPI uygulama giriş noktası.
 from fastapi import FastAPI
 
 from src.api.routers import auth as auth_router
+from src.api.routers import analysis as analysis_router
 
 app = FastAPI(
     title="Agentic Data Preprocessing API",
@@ -19,3 +20,4 @@ app = FastAPI(
 )
 
 app.include_router(auth_router.router)
+app.include_router(analysis_router.router)
