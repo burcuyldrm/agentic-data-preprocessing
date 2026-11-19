@@ -1,0 +1,11 @@
+# ============================================================
+# Geliştirme ve test bağımlılıkları
+# Kullanım: pip install -r requirements-dev.txt
+# ============================================================
+
+-r requirements.txt
+
+# Test
+pytest==9.2.0
+pytest-cov==7.1.0
+httpx==0.28.1

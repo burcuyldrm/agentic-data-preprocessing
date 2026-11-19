@@ -11,14 +11,8 @@ Kabul kriterleri:
   AC6 — Parolalar veritabanında plaintext saklanmaz.
 """
 
-import os
-
 import pytest
 from fastapi.testclient import TestClient
-
-# Testlerde güvenli bir varsayılan anahtar kullan.
-os.environ.setdefault("SECRET_KEY", "test-secret-key-for-pytest-only")
-os.environ.setdefault("ACCESS_TOKEN_EXPIRE_MINUTES", "30")
 
 from src.api.main import app
 from src.api.dependencies import get_db
