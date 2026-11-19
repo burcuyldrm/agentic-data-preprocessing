@@ -103,6 +103,17 @@ Geliştirme Yol Haritası
 - [ ] Kullanıcı kılavuzu, demo, final raporu ve akademik çalışma taslağının hazırlanması.
 Kurulum ve Çalıştırma
 Uygulanabilir ilk sürüm henüz geliştirilmemiştir. Çalışan veri işleme hattı repoya eklendiğinde kurulum, yapılandırma ve çalıştırma komutları bu bölümde paylaşılacaktır. Bu aşamada çalışan API, web arayüzü veya ajan akışı bulunduğu iddia edilmemektedir.
+Geliştirme ve Test
+Otomatik test paketi pytest ile yönetilmektedir. pytest.ini içindeki testpaths = tests/unit tests/integration yapılandırması, pytest'in yalnızca bu iki dizini taramasını sağlar; proje kökündeki ve scripts/ gibi diğer dizinler kapsama dahil değildir.
+
+tests/unit/        — Birim testleri. Veritabanı veya dosya sistemine bağımlılık gerektirmeyen bağımsız Python modüllerini doğrular (görev tespiti, ön işleme, değerlendirme metrikleri).
+tests/integration/ — Entegrasyon testleri. SQLite veritabanı, CSV dosyaları ve FastAPI TestClient kullanan uçtan uca senaryoları kapsar (bellek kalıcılığı, orkestratör akışı, kimlik doğrulama).
+
+Tüm testleri çalıştırmak için:
+.venv/bin/python -m pytest tests/ -q
+
+scripts/ klasöründeki explore_*.py dosyaları otomatik pytest testleri değildir; veri profili çıkarma ve ön işleme modüllerinin elle incelenmesi amacıyla yazılmış bağımsız keşif betikleridir. Bu betikler data/raw/ gibi yerel veri dosyalarına ihtiyaç duyabilir ve pytest tarafından otomatik olarak çalıştırılmaz.
+
 Geliştirme ve Tekrarlanabilirlik İlkeleri
 Değişiklikler anlamlı commit mesajlarıyla izlenecek; uygun durumlarda ayrı geliştirme dalları ve Pull Request'ler kullanılacaktır. Deney yapılandırmaları, rastgelelik tohumları, bağımlılık sürümleri, veri setlerinin kaynak ve sürüm bilgileri ile sonuç metrikleri kaydedilecektir. API anahtarları, parolalar ve özel veri setleri Git deposuna eklenmeyecektir.
 Akademik Bağlam
