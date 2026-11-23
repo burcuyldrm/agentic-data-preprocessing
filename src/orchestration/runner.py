@@ -13,8 +13,10 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from src.core.hashing import compute_profile_hash, compute_strategy_signature
-from src.data_profile import detect_column_types, generate_data_profile, load_dataset
-from src.data_split import split_dataset
+from src.datasets.split     import split_dataset
+from src.profiling.detector import detect_column_types
+from src.profiling.loader   import load_dataset
+from src.profiling.profiler import generate_data_profile
 from src.datasets.repository import build_profile_summary, save_dataset, save_dataset_profile
 from src.evaluation.metrics import (
     build_preprocessor_from_strategy,
