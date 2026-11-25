@@ -24,8 +24,11 @@ from src.evaluation.metrics import (
     evaluate_strategy,
     validate_strategy,
 )
+from src.evaluation.repository import save_evaluation_attempt
 from src.experience_memory.store import query_similar_strategies, safe_record_attempt
 from src.llm_client import StubLLMClient
+from src.preprocessing.pipeline import build_baseline_preprocessor
+from src.preprocessing.strategy import select_preprocessing_strategy
 from src.memory import create_analysis_run, save_analysis_report, update_analysis_run
 from src.orchestration.config import OrchestratorConfig
 from src.orchestration.models import AnalysisResult, AttemptRecord
@@ -35,6 +38,16 @@ from src.preprocessing.repository import upsert_strategy
 from src.task_detection import detect_task_type
 
 logger = logging.getLogger(__name__)
+
+# Mod A sabit strateji. Mod B türetilmiş stratejiyle aynı anahtar kümesini kullanır.
+_BASELINE_STRATEGY: dict = {
+    "imputation_numeric":    "median",
+    "imputation_categorical": "most_frequent",
+    "scaling_method":        "standard",
+    "encoding_method":       "onehot",
+    "outlier_handling":      "none",
+    "feature_selection":     "none",
+}
 
 
 @dataclass
@@ -69,6 +82,8 @@ class _RunContext:
     best_strategy:       Optional[dict]  = None
     best_strategy_id:    Optional[int]   = None
     best_primary_metric: Optional[str]   = None
+    # _run_feedback_loop / _run_single_attempt
+    llm_call_count: int = 0
     # _evaluate_final
     final_scores: Optional[dict] = None
 
@@ -112,8 +127,11 @@ class Orchestrator:
         try:
             df = self._load_and_register(ctx, csv_path, target, user_request, user_id)
             self._split_and_profile(ctx, target, df)
-            self._query_memory(ctx)
-            self._run_feedback_loop(ctx)
+            if ctx.cfg.experiment_mode in ("A", "B"):
+                self._run_mode_ab(ctx)
+            else:
+                self._query_memory(ctx)
+                self._run_feedback_loop(ctx)
             self._evaluate_final(ctx)
             return self._save_and_return(ctx)
         except Exception as exc:
@@ -193,13 +211,167 @@ class Orchestrator:
     # ----------------------------------------------------------------
 
     def _query_memory(self, ctx: _RunContext) -> None:
-        if ctx.cfg.experiment_mode in ("C", "D"):
+        # Yalnızca Mod D geçmiş deneyim belleğini önyükler.
+        # Mod C LLM döngüsü kullanır ama bellek önyüklemesi yapmaz.
+        if ctx.cfg.experiment_mode == "D":
             rows = query_similar_strategies(
                 ctx.conn, ctx.profile_hash, ctx.task_type,
                 exclude_dataset_id=ctx.dataset_id,
                 limit=3,
             )
             ctx.memory_strategies = [dict(r) for r in rows]
+
+    # ----------------------------------------------------------------
+    # Mod A/B — Tek deneme ortak mekanizması
+    # ----------------------------------------------------------------
+
+    def _run_mode_ab(self, ctx: _RunContext) -> None:
+        """
+        Mod A: sabit baseline preprocessor, LLM yok.
+        Mod B: profil tabanlı deterministik strateji, LLM yok.
+
+        Her ikisi de tek deneme çalıştırır ve yalnızca evaluation_attempts'e
+        yazar; experience_memory izolasyonu korunur.
+
+        NOT — Deneme bütçesi farkı: A/B sabit 1 deneme; C/D max_attempts'e
+        kadar döngü çalıştırır. Kontrollü deneylerde bu fark bir deneysel
+        değişken olarak ele alınmalıdır.
+        """
+        if ctx.cfg.experiment_mode == "A":
+            strategy    = dict(_BASELINE_STRATEGY)
+            preprocessor = build_baseline_preprocessor(ctx.numeric_cols, ctx.cat_cols)
+        else:
+            strategy    = self._derive_strategy_from_profile(ctx)
+            preprocessor = build_preprocessor_from_strategy(
+                strategy, ctx.numeric_cols, ctx.cat_cols
+            )
+        self._run_single_attempt(ctx, strategy, preprocessor)
+
+    def _run_single_attempt(
+        self,
+        ctx: _RunContext,
+        strategy: dict,
+        preprocessor,
+    ) -> None:
+        """
+        Tek deneme çalıştırır. Yalnızca evaluation_attempts'e yazar;
+        experience_memory'e yazmaz (Mod A/B bellek izolasyonu).
+        """
+        pmetric = "macro_f1" if ctx.task_type == "classification" else "rmse"
+        mtype   = (
+            "logistic_regression" if ctx.task_type == "classification"
+            else "ridge_regression"
+        )
+        strategy_id = upsert_strategy(ctx.conn, strategy)
+        t_attempt   = time.time()
+
+        try:
+            cv_result = evaluate_strategy(
+                ctx.X_train, ctx.y_train, preprocessor, ctx.task_type,
+                n_splits    = ctx.cfg.n_cv_splits,
+                random_seed = ctx.cfg.random_seed,
+            )
+            cv_score = cv_result["cv_primary_score"]
+            duration = cv_result["duration_seconds"]
+            pmetric  = cv_result["primary_metric_name"]
+
+            record = AttemptRecord(
+                attempt_number     = 1,
+                strategy           = strategy,
+                strategy_id        = strategy_id,
+                cv_primary_score   = cv_score,
+                cv_secondary_score = cv_result.get("cv_secondary_score"),
+                primary_metric     = pmetric,
+                duration_seconds   = duration,
+                status             = "success",
+            )
+
+            save_evaluation_attempt(
+                ctx.conn, ctx.run_id, strategy_id,
+                {
+                    "attempt_number":      1,
+                    "model_type":          cv_result.get("model_type", mtype),
+                    "primary_metric_name": pmetric,
+                    "cv_primary_score":    cv_score,
+                    "cv_secondary_score":  cv_result.get("cv_secondary_score"),
+                    "cv_scores_detail":    cv_result.get("cv_scores_detail"),
+                    "duration_seconds":    duration,
+                    "llm_call_count":      0,
+                    "status":              "success",
+                },
+            )
+
+            ctx.attempts            = [record]
+            ctx.best_score          = cv_score
+            ctx.best_strategy       = strategy
+            ctx.best_strategy_id    = strategy_id
+            ctx.best_primary_metric = pmetric
+            update_analysis_run(ctx.conn, ctx.run_id, "running", attempt_count=1)
+
+        except Exception as exc:
+            duration = time.time() - t_attempt
+            logger.warning("Tek deneme değerlendirme hatası (mod A/B): %s", exc)
+            record = AttemptRecord(
+                attempt_number     = 1,
+                strategy           = strategy,
+                strategy_id        = strategy_id,
+                cv_primary_score   = None,
+                cv_secondary_score = None,
+                primary_metric     = pmetric,
+                duration_seconds   = duration,
+                status             = "failed",
+                error_message      = str(exc),
+            )
+            save_evaluation_attempt(
+                ctx.conn, ctx.run_id, strategy_id,
+                {
+                    "attempt_number":      1,
+                    "model_type":          mtype,
+                    "primary_metric_name": pmetric,
+                    "cv_primary_score":    None,
+                    "duration_seconds":    duration,
+                    "llm_call_count":      0,
+                    "status":              "failed",
+                    "error_message":       str(exc),
+                },
+            )
+            ctx.attempts = [record]
+            update_analysis_run(ctx.conn, ctx.run_id, "running", attempt_count=1)
+
+    def _derive_strategy_from_profile(self, ctx: _RunContext) -> dict:
+        """
+        Eğitim verisinin çarpıklık dağılımına göre ön işleme stratejisi türetir.
+
+        Çoğunluk oyu kuralı:
+          - Sütunların yarısından fazlası |skewness| >= 1 → scaling="robust"
+          - Eşitlik veya standart çoğunluğu → scaling="standard" (muhafazakâr)
+          - imputation: "median" >= "mean" sayısı → "median" (eşitlikte median)
+        Sayısal sütun yoksa veya türetme başarısız olursa baseline'a düşer.
+        """
+        if not ctx.numeric_cols:
+            return dict(_BASELINE_STRATEGY)
+        try:
+            per_col = select_preprocessing_strategy(ctx.X_train, ctx.numeric_cols)
+        except Exception as exc:
+            logger.warning("Strateji türetme hatası, baseline'a düşüldü: %s", exc)
+            return dict(_BASELINE_STRATEGY)
+        if not per_col:
+            return dict(_BASELINE_STRATEGY)
+
+        scalers  = [v["scaler"]  for v in per_col.values()]
+        imputers = [v["imputer"] for v in per_col.values()]
+
+        scaling    = "robust"  if scalers.count("robust")  > scalers.count("standard") else "standard"
+        imputation = "median"  if imputers.count("median") >= imputers.count("mean")    else "mean"
+
+        return {
+            "imputation_numeric":    imputation,
+            "imputation_categorical": "most_frequent",
+            "scaling_method":        scaling,
+            "encoding_method":       "onehot",
+            "outlier_handling":      "none",
+            "feature_selection":     "none",
+        }
 
     # ----------------------------------------------------------------
     # Adım 4 — Geri bildirim döngüsü
@@ -361,6 +533,7 @@ class Orchestrator:
                 "feature_selection":      mem_row.get("feature_selection", "none"),
             }
         except StopIteration:
+            ctx.llm_call_count += 1
             return self.llm.suggest_strategy(
                 ctx.profile_summary, ctx.task_type, tried_signatures, attempt_num
             )
@@ -403,7 +576,7 @@ class Orchestrator:
                 cv_primary_score       = ctx.best_score,
                 total_attempts         = len(ctx.attempts),
                 total_duration_seconds = total_duration,
-                total_llm_calls        = 0,
+                total_llm_calls        = ctx.llm_call_count,
             )
             result_status = "completed"
         else:
@@ -425,6 +598,7 @@ class Orchestrator:
             attempts            = ctx.attempts,
             total_duration_secs = total_duration,
             run_id              = ctx.run_id,
+            total_llm_calls     = ctx.llm_call_count,
         )
 
     # ----------------------------------------------------------------
@@ -453,4 +627,5 @@ class Orchestrator:
             total_duration_secs = time.time() - ctx.t_start,
             run_id              = ctx.run_id,
             error_message       = str(exc),
+            total_llm_calls     = ctx.llm_call_count,
         )
