@@ -33,3 +33,4 @@ class AnalysisResult:
     total_duration_secs: float = 0.0
     run_id:              Optional[int] = None
     error_message:       Optional[str] = None
+    total_llm_calls:     int = 0
