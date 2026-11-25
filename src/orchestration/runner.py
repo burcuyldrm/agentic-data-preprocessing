@@ -26,7 +26,7 @@ from src.evaluation.metrics import (
 )
 from src.evaluation.repository import save_evaluation_attempt
 from src.experience_memory.store import query_similar_strategies, safe_record_attempt
-from src.llm_client import StubLLMClient
+from src.llm_client import create_llm_client
 from src.preprocessing.pipeline import build_baseline_preprocessor
 from src.preprocessing.strategy import select_preprocessing_strategy
 from src.memory import create_analysis_run, save_analysis_report, update_analysis_run
@@ -108,7 +108,7 @@ class Orchestrator:
         config: OrchestratorConfig | None = None,
     ):
         self.config = config or OrchestratorConfig()
-        self.llm    = llm_client or StubLLMClient()
+        self.llm    = llm_client or create_llm_client()
 
     def run(
         self,
@@ -599,6 +599,9 @@ class Orchestrator:
             total_duration_secs = total_duration,
             run_id              = ctx.run_id,
             total_llm_calls     = ctx.llm_call_count,
+            llm_fallback_used   = bool(
+                getattr(self.llm, "fallback_activated", False)
+            ),
         )
 
     # ----------------------------------------------------------------
@@ -628,4 +631,7 @@ class Orchestrator:
             run_id              = ctx.run_id,
             error_message       = str(exc),
             total_llm_calls     = ctx.llm_call_count,
+            llm_fallback_used   = bool(
+                getattr(self.llm, "fallback_activated", False)
+            ),
         )

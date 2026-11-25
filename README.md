@@ -103,6 +103,22 @@ Geliştirme Yol Haritası
 - [ ] Kullanıcı kılavuzu, demo, final raporu ve akademik çalışma taslağının hazırlanması.
 Kurulum ve Çalıştırma
 Uygulanabilir ilk sürüm henüz geliştirilmemiştir. Çalışan veri işleme hattı repoya eklendiğinde kurulum, yapılandırma ve çalıştırma komutları bu bölümde paylaşılacaktır. Bu aşamada çalışan API, web arayüzü veya ajan akışı bulunduğu iddia edilmemektedir.
+LLM Yapılandırması
+Sistem varsayılan olarak gerçek LLM API'si kullanmaz. Mod C ve D için LLM bağlantısını etkinleştirmek üzere .env.example dosyasını .env olarak kopyalayın ve LLM_PROVIDER değerini ayarlayın.
+
+Desteklenen sağlayıcılar: stub (varsayılan, API çağrısı yok), openai (OpenAI ve uyumlu sağlayıcılar).
+
+Temel ortam değişkenleri:
+- LLM_PROVIDER — stub veya openai (varsayılan: stub)
+- LLM_API_KEY — OpenAI API anahtarı (LLM_PROVIDER=openai gerektirir)
+- LLM_MODEL — model adı (varsayılan: gpt-4o-mini)
+- LLM_BASE_URL — özel API endpoint (OpenAI-uyumlu proxy için)
+- LLM_TIMEOUT_SECONDS — istek zaman aşımı saniye cinsinden (varsayılan: 30.0)
+- LLM_MAX_RETRIES — geçici hatalarda yeniden deneme sayısı (varsayılan: 2)
+- LLM_FALLBACK_ENABLED — yeniden denemeler tükenince stub'a dön (varsayılan: false)
+
+Mod A ve B LLM sağlayıcısını hiçbir koşulda çağırmaz. API anahtarı günlüklere yazılmaz ve Git deposuna eklenmez.
+
 Geliştirme ve Test
 Otomatik test paketi pytest ile yönetilmektedir. pytest.ini içindeki testpaths = tests/unit tests/integration yapılandırması, pytest'in yalnızca bu iki dizini taramasını sağlar; proje kökündeki ve scripts/ gibi diğer dizinler kapsama dahil değildir.
 
