@@ -20,3 +20,6 @@ PyJWT==2.8.0
 bcrypt==5.0.0
 python-dotenv==1.0.1
 pydantic[email]==2.14.3
+
+# LLM sağlayıcı
+openai==3.59.0
