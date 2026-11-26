@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.llm_client import LLMClient
 from src.orchestration.config import OrchestratorConfig
 from src.orchestration.runner import Orchestrator
 
@@ -40,13 +41,13 @@ def _make_csv(tmp_path, n: int = 120, task: str = "classification", seed: int = 
 # Stub LLM istemcileri
 # ---------------------------------------------------------------------------
 
-class _NullLLMClient:
+class _NullLLMClient(LLMClient):
     """Hiçbir strateji öneremeyen stub — döngüyü ilk denemede sonlandırır."""
     def suggest_strategy(self, profile_summary, task_type, tried_signatures, attempt_num):
         return None
 
 
-class _AlwaysSameLLMClient:
+class _AlwaysSameLLMClient(LLMClient):
     """Her denemede aynı geçerli stratejiyi döndürür — tekrar kontrolünü tetikler."""
     _STRATEGY = {
         "imputation_numeric":     "median",
@@ -60,7 +61,7 @@ class _AlwaysSameLLMClient:
         return dict(self._STRATEGY)
 
 
-class _AlwaysInvalidLLMClient:
+class _AlwaysInvalidLLMClient(LLMClient):
     """
     Her denemede farklı (geçersiz) strateji döndürür.
     consecutive_fails sayacını doldurmak için farklı imzalar üretir.

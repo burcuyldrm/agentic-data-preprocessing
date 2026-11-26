@@ -83,7 +83,9 @@ class _RunContext:
     best_strategy_id:    Optional[int]   = None
     best_primary_metric: Optional[str]   = None
     # _run_feedback_loop / _run_single_attempt
-    llm_call_count: int = 0
+    llm_call_count:      int = 0
+    provider_call_count: int = 0
+    termination_reason:  str = ""
     # _evaluate_final
     final_scores: Optional[dict] = None
 
@@ -127,6 +129,7 @@ class Orchestrator:
         try:
             df = self._load_and_register(ctx, csv_path, target, user_request, user_id)
             self._split_and_profile(ctx, target, df)
+            self.llm.begin_session(ctx.cfg.max_llm_calls)
             if ctx.cfg.experiment_mode in ("A", "B"):
                 self._run_mode_ab(ctx)
             else:
@@ -167,6 +170,7 @@ class Orchestrator:
             experiment_mode = ctx.cfg.experiment_mode,
             random_seed     = ctx.cfg.random_seed,
             max_attempts    = ctx.cfg.max_attempts,
+            max_llm_calls   = ctx.cfg.max_llm_calls,
             user_id         = user_id,
         )
 
@@ -385,18 +389,27 @@ class Orchestrator:
         best_strategy_id:    Optional[int]       = None
         best_primary_metric: Optional[str]       = None
         consecutive_fails:   int                 = 0
+        termination_reason:  str                 = "max_attempts_reached"
 
         mem_iter = iter(ctx.memory_strategies)
 
         for attempt_num in range(1, ctx.cfg.max_attempts + 1):
             if time.time() - ctx.t_start > ctx.cfg.time_limit_seconds:
                 logger.info("Zaman sınırına ulaşıldı (attempt %d).", attempt_num)
+                termination_reason = "time_limit_reached"
                 break
 
-            strategy = self._select_strategy(ctx, mem_iter, tried_signatures, attempt_num)
+            pre_provider_calls     = self.llm.session_provider_calls
+            strategy               = self._select_strategy(ctx, mem_iter, tried_signatures, attempt_num)
+            attempt_provider_delta = self.llm.session_provider_calls - pre_provider_calls
 
             if strategy is None:
-                logger.info("LLM strateji önerisi tükendi (attempt %d).", attempt_num)
+                if self.llm.budget_exhausted:
+                    logger.info("LLM çağrı bütçesi tükendi (attempt %d).", attempt_num)
+                    termination_reason = "llm_call_limit_reached"
+                else:
+                    logger.info("LLM strateji önerisi tükendi (attempt %d).", attempt_num)
+                    termination_reason = "strategies_exhausted"
                 break
 
             sig = compute_strategy_signature(strategy)
@@ -419,6 +432,7 @@ class Orchestrator:
                 attempts.append(record)
                 consecutive_fails += 1
                 if consecutive_fails >= ctx.cfg.max_consecutive_failures:
+                    termination_reason = "consecutive_failures"
                     break
                 continue
 
@@ -466,7 +480,7 @@ class Orchestrator:
                         "cv_secondary_score":  cv_result.get("cv_secondary_score"),
                         "cv_scores_detail":    cv_result.get("cv_scores_detail"),
                         "duration_seconds":    duration,
-                        "llm_call_count":      0,
+                        "llm_call_count":      attempt_provider_delta,
                         "status":              "success",
                     },
                     dataset_id=ctx.dataset_id,
@@ -497,13 +511,14 @@ class Orchestrator:
                         "primary_metric_name": pmetric,
                         "cv_primary_score":    None,
                         "duration_seconds":    duration,
-                        "llm_call_count":      0,
+                        "llm_call_count":      attempt_provider_delta,
                         "status":              "failed",
                         "error_message":       str(exc),
                     },
                     dataset_id=ctx.dataset_id,
                 )
                 if consecutive_fails >= ctx.cfg.max_consecutive_failures:
+                    termination_reason = "consecutive_failures"
                     break
 
             attempts.append(record)
@@ -514,6 +529,8 @@ class Orchestrator:
         ctx.best_strategy       = best_strategy
         ctx.best_strategy_id    = best_strategy_id
         ctx.best_primary_metric = best_primary_metric
+        ctx.termination_reason  = termination_reason
+        ctx.provider_call_count = self.llm.session_provider_calls
 
     def _select_strategy(
         self,
@@ -562,7 +579,8 @@ class Orchestrator:
     # ----------------------------------------------------------------
 
     def _save_and_return(self, ctx: _RunContext) -> AnalysisResult:
-        total_duration = time.time() - ctx.t_start
+        total_duration     = time.time() - ctx.t_start
+        termination_reason = ctx.termination_reason or "completed"
 
         if ctx.best_strategy is not None:
             update_analysis_run(
@@ -577,6 +595,8 @@ class Orchestrator:
                 total_attempts         = len(ctx.attempts),
                 total_duration_seconds = total_duration,
                 total_llm_calls        = ctx.llm_call_count,
+                total_provider_calls   = ctx.provider_call_count,
+                termination_reason     = termination_reason,
             )
             result_status = "completed"
         else:
@@ -599,6 +619,8 @@ class Orchestrator:
             total_duration_secs = total_duration,
             run_id              = ctx.run_id,
             total_llm_calls     = ctx.llm_call_count,
+            provider_calls      = ctx.provider_call_count,
+            termination_reason  = termination_reason,
             llm_fallback_used   = bool(
                 getattr(self.llm, "fallback_activated", False)
             ),
@@ -631,6 +653,8 @@ class Orchestrator:
             run_id              = ctx.run_id,
             error_message       = str(exc),
             total_llm_calls     = ctx.llm_call_count,
+            provider_calls      = ctx.provider_call_count,
+            termination_reason  = "evaluation_failed",
             llm_fallback_used   = bool(
                 getattr(self.llm, "fallback_activated", False)
             ),

@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.llm_client import LLMClient
 from src.orchestration.config import OrchestratorConfig
 from src.orchestration.runner import Orchestrator, _BASELINE_STRATEGY
 from src.persistence.db import init_db
@@ -71,12 +72,12 @@ def _make_csv_all_categorical(tmp_path, n: int = 120) -> str:
     return path
 
 
-class _NullLLM:
+class _NullLLM(LLMClient):
     def suggest_strategy(self, *args, **kwargs):
         return None
 
 
-class _CountingLLM:
+class _CountingLLM(LLMClient):
     """Her çağrıda benzersiz strateji döndürür; çağrı sayısını izler."""
     _STRATEGIES = [
         {"imputation_numeric": "median", "imputation_categorical": "most_frequent",

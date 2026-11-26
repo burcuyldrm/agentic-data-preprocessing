@@ -2,6 +2,7 @@
 FR-07 — LLM strateji öneri arayüzü.
 
 OpenAI-uyumlu sağlayıcı adaptörü ve ortam değişkeni yapılandırması.
+
 Varsayılan çalışma modu stub kalır (LLM_PROVIDER ayarlanmadıkça).
 """
 
@@ -10,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -74,15 +76,24 @@ class LLMClient(ABC):
         Veri profili ve daha önce denenen stratejiler baz alınarak
         yeni bir önişleme stratejisi önerir.
 
-        Args:
-            profile_summary:  build_profile_summary() çıktısı.
-            task_type:        'classification' veya 'regression'.
-            tried_signatures: Daha önce denenen strategy_signature kümesi.
-            attempt_number:   1-tabanlı mevcut deneme numarası.
-
         Returns:
             Strateji parametreleri dict'i veya None (öneri tükenirse).
         """
+
+    # -- AI-03 oturum yönetimi (varsayılan no-op; stub uyumlu) ----------------
+
+    def begin_session(self, budget: int) -> None:
+        """Her analiz çalıştırması başında çağrılır; oturum sayacını sıfırlar."""
+
+    @property
+    def session_provider_calls(self) -> int:
+        """Mevcut oturumda yapılan gerçek sağlayıcı API çağrısı sayısı."""
+        return 0
+
+    @property
+    def budget_exhausted(self) -> bool:
+        """Çağrı bütçesi tükendiğinde True; stub için her zaman False."""
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +156,7 @@ _CANDIDATES: list[dict] = [
 class StubLLMClient(LLMClient):
     """
     Deterministik, sıralı strateji önericisi.
-    Bu bir gerçek LLM değildir; testler ve geliştirme ortamı için vardır.
+    Testler ve geliştirme ortamı için vardır.
     6 sabit adayı denenmemiş ilk sırayla önerir; hepsi denenince None döner.
     """
 
@@ -339,24 +350,56 @@ class OpenAILLMClient(LLMClient):
                 "openai paketi bulunamadı. `pip install openai` çalıştırın."
             ) from exc
 
-        self._config      = config
-        self._openai      = _openai
-        self._fallback    = StubLLMClient() if config.fallback_enabled else None
-        self._stub_active = False
+        self._config   = config
+        self._openai   = _openai
+        self._fallback = StubLLMClient() if config.fallback_enabled else None
 
         client_kwargs: dict = {
-            "api_key": config.api_key,
-            "timeout": config.timeout_seconds,
+            "api_key":     config.api_key,
+            "timeout":     config.timeout_seconds,
+            "max_retries": 0,  # AI-03: her girişim bütçeden sayılır; SDK retry devre dışı
         }
         if config.base_url:
             client_kwargs["base_url"] = config.base_url
 
         self._client = _openai.OpenAI(**client_kwargs)
 
+        # AI-03: thread-local session state (eş zamanlı çalıştırma güvenliği)
+        self._tls = threading.local()
+
+    def _tls_state(self):
+        tls = self._tls
+        if not hasattr(tls, "calls"):
+            tls.calls       = 0
+            tls.budget      = 15
+            tls.exhausted   = False
+            tls.stub_active = False
+        return tls
+
+    # -- AI-03 oturum yönetimi -------------------------------------------
+
+    def begin_session(self, budget: int) -> None:
+        """Her analiz çalıştırması başında çağrılır; tüm oturum durumunu sıfırlar."""
+        s             = self._tls_state()
+        s.calls       = 0
+        s.budget      = budget
+        s.exhausted   = False
+        s.stub_active = False
+
+    @property
+    def session_provider_calls(self) -> int:
+        return self._tls_state().calls
+
+    @property
+    def budget_exhausted(self) -> bool:
+        return self._tls_state().exhausted
+
+    # -- AI-02 fallback bilgisi ------------------------------------------
+
     @property
     def fallback_activated(self) -> bool:
         """True ise stub fallback'e geçilmiştir."""
-        return self._stub_active
+        return self._tls_state().stub_active
 
     def suggest_strategy(
         self,
@@ -365,7 +408,8 @@ class OpenAILLMClient(LLMClient):
         tried_signatures: set[str],
         attempt_number: int,
     ) -> Optional[dict]:
-        if self._stub_active and self._fallback is not None:
+        s = self._tls_state()
+        if s.stub_active and self._fallback is not None:
             return self._fallback.suggest_strategy(
                 profile_summary, task_type, tried_signatures, attempt_number
             )
@@ -375,6 +419,19 @@ class OpenAILLMClient(LLMClient):
         delay     = 1.0
 
         for attempt in range(self._config.max_retries + 1):
+            # AI-03: bütçe kontrolü — çağrıdan ÖNCE
+            s = self._tls_state()
+            if s.calls >= s.budget:
+                s.exhausted = True
+                logger.info(
+                    "LLM çağrı bütçesi tükendi (%d/%d), çağrı engellendi.",
+                    s.calls, s.budget,
+                )
+                break  # sleep yok — hemen çık
+
+            # Sayacı SDK çağrısından hemen önce artır (AI-03 politikası)
+            s.calls += 1
+
             try:
                 response = self._client.chat.completions.create(
                     model=self._config.model,
@@ -415,13 +472,21 @@ class OpenAILLMClient(LLMClient):
                     sleep_secs,
                 )
                 if attempt < self._config.max_retries:
-                    time.sleep(sleep_secs)
+                    # Bir sonraki retry bütçeyi tüketecekse bekleme
+                    if self._tls_state().calls >= self._tls_state().budget:
+                        logger.info("Bütçe tükendi, retry backoff uygulanmıyor.")
+                    else:
+                        time.sleep(sleep_secs)
                     delay = min(delay * 2, 10.0)
 
             except Exception as exc:
                 logger.error("LLM beklenmeyen hata: %s", type(exc).__name__)
                 last_exc = exc
                 break
+
+        # Döngü sona erdi: bütçe mi tükendi yoksa retry bütçesi mi?
+        if self._tls_state().exhausted:
+            return None  # bütçe nedeniyle — fallback KULLANILMAZ
 
         logger.warning(
             "LLM %d denemeden sonra yanıt vermedi: %s",
@@ -430,7 +495,7 @@ class OpenAILLMClient(LLMClient):
         )
         if self._fallback is not None:
             logger.info("Fallback stub istemciye geçiliyor.")
-            self._stub_active = True
+            self._tls_state().stub_active = True
             return self._fallback.suggest_strategy(
                 profile_summary, task_type, tried_signatures, attempt_number
             )

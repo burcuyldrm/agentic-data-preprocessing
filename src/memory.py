@@ -56,6 +56,7 @@ def create_analysis_run(
     experiment_mode: str = "D",
     random_seed: int = 42,
     max_attempts: int = 5,
+    max_llm_calls: int = 15,
     user_id: int = _SYSTEM_USER_ID,
 ) -> int:
     """
@@ -67,12 +68,12 @@ def create_analysis_run(
         INSERT INTO analysis_runs (
             user_id, dataset_id, user_request,
             status, experiment_mode, random_seed,
-            max_attempts, attempt_count, started_at
-        ) VALUES (?, ?, ?, 'running', ?, ?, ?, 0, ?)
+            max_attempts, max_llm_calls, attempt_count, started_at
+        ) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, 0, ?)
         """,
         (
             user_id, dataset_id, user_request,
-            experiment_mode, random_seed, max_attempts,
+            experiment_mode, random_seed, max_attempts, max_llm_calls,
             _utc_now(),
         ),
     )
@@ -137,6 +138,8 @@ def save_analysis_report(
     total_duration_seconds: Optional[float] = None,
     total_llm_calls: int = 0,
     selection_rationale: Optional[str] = None,
+    total_provider_calls: int = 0,
+    termination_reason: str = "",
 ) -> int:
     """
     Analiz çalıştırmasının nihai raporunu analysis_reports tablosuna kaydeder.
@@ -154,8 +157,9 @@ def save_analysis_report(
             final_test_primary_score, final_test_secondary_score,
             final_test_metrics_detail, cv_primary_score,
             total_attempts, total_duration_seconds, total_llm_calls,
+            total_provider_calls, termination_reason,
             selection_rationale, report_created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             run_id,
@@ -167,6 +171,8 @@ def save_analysis_report(
             total_attempts,
             total_duration_seconds,
             total_llm_calls,
+            total_provider_calls,
+            termination_reason or None,
             selection_rationale,
             _utc_now(),
         ),

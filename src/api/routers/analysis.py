@@ -33,8 +33,10 @@ class RunResponse(BaseModel):
     final_test_scores:   Optional[dict]
     total_attempts:      int
     total_duration_secs: float
-    total_llm_calls:     int  = 0
-    llm_fallback_used:   bool = False
+    total_llm_calls:     int           = 0
+    provider_calls:      int           = 0
+    termination_reason:  str           = ""
+    llm_fallback_used:   bool          = False
     error_message:       Optional[str] = None
 
 
@@ -100,6 +102,8 @@ def run_analysis(
         total_attempts      = len(result.attempts),
         total_duration_secs = result.total_duration_secs,
         total_llm_calls     = result.total_llm_calls,
+        provider_calls      = result.provider_calls,
+        termination_reason  = result.termination_reason,
         llm_fallback_used   = result.llm_fallback_used,
         error_message       = result.error_message,
     )
