@@ -224,3 +224,93 @@ class TestFallbackIntegration:
         cfg    = OrchestratorConfig(max_attempts=1, n_cv_splits=2, experiment_mode="A")
         result = Orchestrator(config=cfg).run(csv, "target", str(tmp_path / "db"))
         assert result.llm_fallback_used is False
+
+
+# ---------------------------------------------------------------------------
+# 6. AI-03: provider_calls, termination_reason, begin_session entegrasyonu
+# ---------------------------------------------------------------------------
+
+class TestAI03ProviderCallsAndTermination:
+    def test_result_has_provider_calls_field(self, tmp_path):
+        csv    = _make_csv(tmp_path)
+        cfg    = OrchestratorConfig(max_attempts=1, n_cv_splits=2)
+        result = Orchestrator(config=cfg).run(csv, "target", str(tmp_path / "db"))
+        assert hasattr(result, "provider_calls")
+        assert isinstance(result.provider_calls, int)
+
+    def test_result_has_termination_reason_field(self, tmp_path):
+        csv    = _make_csv(tmp_path)
+        cfg    = OrchestratorConfig(max_attempts=1, n_cv_splits=2)
+        result = Orchestrator(config=cfg).run(csv, "target", str(tmp_path / "db"))
+        assert hasattr(result, "termination_reason")
+        assert isinstance(result.termination_reason, str)
+
+    def test_mode_a_provider_calls_zero(self, tmp_path):
+        """Mod A LLM çağırmaz; provider_calls=0 olmalı."""
+        csv    = _make_csv(tmp_path)
+        cfg    = OrchestratorConfig(max_attempts=1, n_cv_splits=2, experiment_mode="A")
+        result = Orchestrator(config=cfg).run(csv, "target", str(tmp_path / "db"))
+        assert result.provider_calls == 0
+
+    def test_mode_b_provider_calls_zero(self, tmp_path):
+        """Mod B LLM çağırmaz; provider_calls=0 olmalı."""
+        csv    = _make_csv(tmp_path)
+        cfg    = OrchestratorConfig(max_attempts=1, n_cv_splits=2, experiment_mode="B")
+        result = Orchestrator(config=cfg).run(csv, "target", str(tmp_path / "db"))
+        assert result.provider_calls == 0
+
+    def test_completed_run_has_nonempty_termination_reason(self, tmp_path):
+        csv    = _make_csv(tmp_path)
+        cfg    = OrchestratorConfig(max_attempts=1, n_cv_splits=2)
+        result = Orchestrator(config=cfg).run(csv, "target", str(tmp_path / "db"))
+        assert result.status == "completed"
+        assert result.termination_reason != ""
+
+    def test_begin_session_called_per_run(self, tmp_path):
+        """İki ardışık run, birbirinin provider_calls sayacını sıfırlamalı."""
+        csv    = _make_csv(tmp_path)
+        client = _CountingLLMClient()
+        cfg    = OrchestratorConfig(max_attempts=1, n_cv_splits=2, experiment_mode="C")
+        orch   = Orchestrator(llm_client=client, config=cfg)
+
+        r1 = orch.run(csv, "target", str(tmp_path / "db1"))
+        r2 = orch.run(csv, "target", str(tmp_path / "db2"))
+
+        # Her run bağımsız; total_llm_calls her run için ayrı sayılmalı
+        assert r1.total_llm_calls >= 1
+        assert r2.total_llm_calls >= 1
+
+    def test_provider_calls_in_error_run(self, tmp_path):
+        """Hatalı çalışma da provider_calls alanına sahip olmalı."""
+        result = Orchestrator().run(
+            "/nonexistent/path.csv", "target", str(tmp_path / "db")
+        )
+        assert result.status == "failed"
+        assert hasattr(result, "provider_calls")
+        assert isinstance(result.provider_calls, int)
+
+    def test_concurrent_runs_isolated(self, tmp_path):
+        """Farklı thread'lerde eş zamanlı çalışmalar birbirini bozmamalı."""
+        import threading as _threading
+
+        csv = _make_csv(tmp_path)
+        cfg = OrchestratorConfig(max_attempts=1, n_cv_splits=2, experiment_mode="C")
+        results: list = []
+        errors:  list = []
+
+        def run_once(db_suffix: str):
+            try:
+                orch   = Orchestrator(config=cfg)
+                result = orch.run(csv, "target", str(tmp_path / f"db_{db_suffix}"))
+                results.append(result)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [_threading.Thread(target=run_once, args=(str(i),)) for i in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 0
+        assert all(r.status == "completed" for r in results)

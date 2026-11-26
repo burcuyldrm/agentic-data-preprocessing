@@ -16,6 +16,23 @@ _SYSTEM_USER_ID = 1
 _SYSTEM_USER_EMAIL = "system@local"
 
 
+def _run_migrations(conn: sqlite3.Connection) -> None:
+    """
+    Mevcut veritabanına AI-03 sütunlarını ekler (backward compat).
+    PRAGMA table_info ile varlık kontrolü yapar; yoksa ALTER TABLE uygular.
+    """
+    migrations = [
+        ("analysis_runs",    "max_llm_calls",        "INTEGER NOT NULL DEFAULT 15"),
+        ("analysis_reports", "total_provider_calls", "INTEGER NOT NULL DEFAULT 0"),
+        ("analysis_reports", "termination_reason",   "TEXT"),
+    ]
+    for table, column, definition in migrations:
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+    conn.commit()
+
+
 def init_db(db_path: str) -> sqlite3.Connection:
     """
     Veritabanı bağlantısı açar, şemayı uygular ve bağlantıyı döndürür.
@@ -34,6 +51,9 @@ def init_db(db_path: str) -> sqlite3.Connection:
 
     # executescript implicit COMMIT yapar; foreign_keys'i yenile.
     conn.execute("PRAGMA foreign_keys = ON")
+
+    # Mevcut veritabanlarına AI-03 sütunlarını ekle.
+    _run_migrations(conn)
 
     # FR-01 tamamlanana kadar sistem kullanıcısını hazır tut.
     conn.execute(

@@ -6,6 +6,7 @@ create_llm_client, OpenAILLMClient retry/fallback davranışları.
 """
 
 import json
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -85,12 +86,12 @@ def _make_openai_client(
 ) -> OpenAILLMClient:
     """__init__ çağırmadan OpenAILLMClient oluşturur."""
     mock_openai, mock_underlying, _ = _make_mock_openai(response_content)
-    client              = object.__new__(OpenAILLMClient)
-    client._config      = cfg
-    client._openai      = mock_openai
-    client._client      = mock_underlying
-    client._fallback    = None
-    client._stub_active = False
+    client           = object.__new__(OpenAILLMClient)
+    client._config   = cfg
+    client._openai   = mock_openai
+    client._client   = mock_underlying
+    client._fallback = None
+    client._tls      = threading.local()
     return client
 
 
@@ -400,12 +401,12 @@ class TestOpenAILLMClientRetry:
         cfg = LLMConfig(provider="openai", api_key="sk-test", max_retries=max_retries)
         mock_openai, mock_underlying, mock_response = _make_mock_openai()
         mock_underlying.chat.completions.create.side_effect = side_effects
-        client              = object.__new__(OpenAILLMClient)
-        client._config      = cfg
-        client._openai      = mock_openai
-        client._client      = mock_underlying
-        client._fallback    = None
-        client._stub_active = False
+        client           = object.__new__(OpenAILLMClient)
+        client._config   = cfg
+        client._openai   = mock_openai
+        client._client   = mock_underlying
+        client._fallback = None
+        client._tls      = threading.local()
         return client, mock_openai, mock_underlying, mock_response
 
     def test_timeout_triggers_retry(self):
@@ -501,12 +502,12 @@ class TestOpenAILLMClientFallback:
         exc_cls = mock_openai.APITimeoutError
         mock_underlying.chat.completions.create.side_effect = exc_cls("timeout")
 
-        client              = object.__new__(OpenAILLMClient)
-        client._config      = cfg
-        client._openai      = mock_openai
-        client._client      = mock_underlying
-        client._fallback    = StubLLMClient()
-        client._stub_active = False
+        client           = object.__new__(OpenAILLMClient)
+        client._config   = cfg
+        client._openai   = mock_openai
+        client._client   = mock_underlying
+        client._fallback = StubLLMClient()
+        client._tls      = threading.local()
 
         with patch("time.sleep"):
             result = client.suggest_strategy(
@@ -525,12 +526,12 @@ class TestOpenAILLMClientFallback:
         exc_cls = mock_openai.APITimeoutError
         mock_underlying.chat.completions.create.side_effect = exc_cls("timeout")
 
-        client              = object.__new__(OpenAILLMClient)
-        client._config      = cfg
-        client._openai      = mock_openai
-        client._client      = mock_underlying
-        client._fallback    = None
-        client._stub_active = False
+        client           = object.__new__(OpenAILLMClient)
+        client._config   = cfg
+        client._openai   = mock_openai
+        client._client   = mock_underlying
+        client._fallback = None
+        client._tls      = threading.local()
 
         with patch("time.sleep"):
             result = client.suggest_strategy(_PROFILE, "classification", set(), 1)
@@ -546,12 +547,12 @@ class TestOpenAILLMClientFallback:
         exc_cls = mock_openai.APITimeoutError
         mock_underlying.chat.completions.create.side_effect = exc_cls("timeout")
 
-        client              = object.__new__(OpenAILLMClient)
-        client._config      = cfg
-        client._openai      = mock_openai
-        client._client      = mock_underlying
-        client._fallback    = StubLLMClient()
-        client._stub_active = False
+        client           = object.__new__(OpenAILLMClient)
+        client._config   = cfg
+        client._openai   = mock_openai
+        client._client   = mock_underlying
+        client._fallback = StubLLMClient()
+        client._tls      = threading.local()
 
         profile = {"numeric_column_count": 2, "categorical_column_count": 0, "total_missing_pct": 0.0}
 
@@ -563,3 +564,127 @@ class TestOpenAILLMClientFallback:
         call_count_before = mock_underlying.chat.completions.create.call_count
         client.suggest_strategy(profile, "classification", set(), 2)
         assert mock_underlying.chat.completions.create.call_count == call_count_before
+
+
+# ---------------------------------------------------------------------------
+# AI-03: oturum yönetimi ve bütçe zorunluluğu
+# ---------------------------------------------------------------------------
+
+class TestOpenAILLMClientSessionManagement:
+    def test_begin_session_resets_counter(self):
+        client = _make_openai_client()
+        client.begin_session(budget=15)
+        client.suggest_strategy(_PROFILE, "classification", set(), 1)
+        assert client.session_provider_calls == 1
+        client.begin_session(budget=15)
+        assert client.session_provider_calls == 0
+
+    def test_begin_session_resets_budget_exhausted(self):
+        client = _make_openai_client(
+            cfg=LLMConfig(provider="openai", api_key="sk-test", max_retries=0)
+        )
+        client.begin_session(budget=1)
+        client.suggest_strategy(_PROFILE, "classification", set(), 1)
+        # İkinci çağrı bütçeyi tüketir
+        client.suggest_strategy(_PROFILE, "classification", set(), 2)
+        assert client.budget_exhausted is True
+        client.begin_session(budget=15)
+        assert client.budget_exhausted is False
+
+    def test_provider_calls_counted_per_sdk_call(self):
+        client = _make_openai_client()
+        client.begin_session(budget=5)
+        client.suggest_strategy(_PROFILE, "classification", set(), 1)
+        assert client.session_provider_calls == 1
+
+    def test_sixteenth_call_blocked(self):
+        """16. çağrı SDK'ya ulaşmamalı."""
+        client = _make_openai_client(
+            cfg=LLMConfig(provider="openai", api_key="sk-test", max_retries=0)
+        )
+        client.begin_session(budget=15)
+        for i in range(15):
+            client.suggest_strategy(_PROFILE, "classification", set(), i + 1)
+        result = client.suggest_strategy(_PROFILE, "classification", set(), 16)
+        assert result is None
+        assert client.budget_exhausted is True
+        assert client._client.chat.completions.create.call_count == 15
+
+    def test_no_backoff_when_budget_exhausted(self):
+        """Bütçe tükendiğinde retry bekleme uygulanmamalı."""
+        client = _make_openai_client(
+            cfg=LLMConfig(provider="openai", api_key="sk-test", max_retries=5)
+        )
+        client.begin_session(budget=1)
+        exc_cls = client._openai.APITimeoutError
+        client._client.chat.completions.create.side_effect = exc_cls("timeout")
+        with patch("time.sleep") as mock_sleep:
+            client.suggest_strategy(_PROFILE, "classification", set(), 1)
+        assert mock_sleep.call_count == 0
+
+    def test_budget_exhausted_does_not_trigger_fallback(self):
+        """Bütçe tükenince stub fallback devreye GİRMEMELİ."""
+        cfg = LLMConfig(
+            provider="openai", api_key="sk-test",
+            max_retries=0, fallback_enabled=True,
+        )
+        client           = object.__new__(OpenAILLMClient)
+        client._config   = cfg
+        client._openai   = _make_mock_openai()[0]
+        client._client   = _make_mock_openai()[1]
+        client._fallback = StubLLMClient()
+        client._tls      = threading.local()
+        client.begin_session(budget=0)  # bütçe zaten tükenmiş
+        result = client.suggest_strategy(_PROFILE, "classification", set(), 1)
+        assert result is None
+        assert client.fallback_activated is False
+
+    def test_concurrent_sessions_isolated(self):
+        """Aynı istemciyi kullanan iki thread birbirinin bütçesini bozmamalı."""
+        client  = _make_openai_client(
+            cfg=LLMConfig(provider="openai", api_key="sk-test", max_retries=0)
+        )
+        t1_results: list = []
+        t2_results: list = []
+        barrier = threading.Barrier(2)
+
+        def run_t1():
+            client.begin_session(budget=3)
+            barrier.wait()
+            for i in range(4):  # 4 girişim; bütçe yalnızca 3'e izin verir
+                client.suggest_strategy(_PROFILE, "classification", set(), i + 1)
+            t1_results.append((client.session_provider_calls, client.budget_exhausted))
+
+        def run_t2():
+            client.begin_session(budget=10)
+            barrier.wait()
+            client.suggest_strategy(_PROFILE, "classification", set(), 1)
+            t2_results.append((client.session_provider_calls, client.budget_exhausted))
+
+        th1 = threading.Thread(target=run_t1)
+        th2 = threading.Thread(target=run_t2)
+        th1.start(); th2.start()
+        th1.join();  th2.join()
+
+        t1_calls, t1_exhausted = t1_results[0]
+        t2_calls, t2_exhausted = t2_results[0]
+
+        assert t1_calls == 3           # T1'in bütçesi 3
+        assert t1_exhausted is True
+        assert t2_calls == 1           # T2, T1'den etkilenmemiş
+        assert t2_exhausted is False
+
+
+# ---------------------------------------------------------------------------
+# AI-03: SDK otomatik retry devre dışı
+# ---------------------------------------------------------------------------
+
+class TestSDKAutoRetryDisabled:
+    def test_max_retries_zero_passed_to_openai_constructor(self):
+        """OpenAI() çağrısında max_retries=0 iletilmeli (SDK retry devre dışı)."""
+        mock_openai      = MagicMock()
+        mock_openai.OpenAI.return_value = MagicMock()
+        cfg = LLMConfig(provider="openai", api_key="sk-test")
+        with patch.dict("sys.modules", {"openai": mock_openai}):
+            OpenAILLMClient(cfg)
+        assert mock_openai.OpenAI.call_args.kwargs.get("max_retries") == 0

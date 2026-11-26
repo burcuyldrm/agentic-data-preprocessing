@@ -118,6 +118,8 @@ CREATE TABLE IF NOT EXISTS analysis_runs (
     random_seed     INTEGER NOT NULL DEFAULT 42,
     max_attempts    INTEGER NOT NULL DEFAULT 5
                             CHECK (max_attempts BETWEEN 1 AND 10),
+    max_llm_calls   INTEGER NOT NULL DEFAULT 15
+                            CHECK (max_llm_calls BETWEEN 1 AND 15),
     attempt_count   INTEGER NOT NULL DEFAULT 0
                             CHECK (attempt_count >= 0),
     started_at      TEXT    NOT NULL DEFAULT (datetime('now')),
@@ -278,6 +280,9 @@ CREATE TABLE IF NOT EXISTS analysis_reports (
                                               OR total_duration_seconds >= 0),
     total_llm_calls            INTEGER NOT NULL DEFAULT 0
                                        CHECK (total_llm_calls >= 0),
+    total_provider_calls       INTEGER NOT NULL DEFAULT 0
+                                       CHECK (total_provider_calls >= 0),
+    termination_reason         TEXT,
     -- LLM tarafından üretilen strateji seçim gerekçesi
     selection_rationale        TEXT,
     report_created_at          TEXT    NOT NULL DEFAULT (datetime('now'))

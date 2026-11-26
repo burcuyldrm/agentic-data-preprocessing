@@ -33,5 +33,7 @@ class AnalysisResult:
     total_duration_secs: float = 0.0
     run_id:              Optional[int] = None
     error_message:       Optional[str] = None
-    total_llm_calls:     int  = 0
+    total_llm_calls:     int  = 0   # mantıksal suggest_strategy çağrısı
+    provider_calls:      int  = 0   # gerçek sağlayıcı HTTP isteği sayısı (AI-03)
+    termination_reason:  str  = ""  # döngü neden durdu (AI-03)
     llm_fallback_used:   bool = False
